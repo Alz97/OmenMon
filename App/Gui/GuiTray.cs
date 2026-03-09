@@ -55,6 +55,24 @@ namespace OmenMon.AppGui {
         // Constructs the tray notification application context
         public GuiTray () {
 
+            MenuItem dynamicItem = new MenuItem("Curva dinamica...");
+dynamicItem.Click += (s, e) => {
+    using (var form = new GuiFormFanCurve(Config.DynamicCurveAC, Config.DynamicCurveBattery)) {
+        if (form.ShowDialog() == DialogResult.OK) {
+            // Salva le curve modificate
+            Config.DynamicCurveAC = form.CurveAC;
+            Config.DynamicCurveBattery = form.CurveBattery;
+            Config.Save(); // se esiste un metodo di salvataggio
+
+            // Se la modalità dinamica è attiva, aggiorna il controller
+            if (Config.UseDynamicFanCurve && Context.Op.activeController is DynamicFanController dyn) {
+                var currentCurve = Context.Op.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
+                dyn.SetCurve(currentCurve);
+            }
+        }
+    }
+};
+
             // Retain the context for future use
             if(Context == null)
                 Context = this;
@@ -332,3 +350,4 @@ namespace OmenMon.AppGui {
     }
 
 }
+
