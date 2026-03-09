@@ -17,6 +17,10 @@ namespace OmenMon.AppGui {
     // Implements a backend for GUI mode operations
     public class GuiOp {
 
+        // Campi aggiuntivi
+        private DynamicFanController dynamicController;
+        private object activeController; // può essere FanProgram o DynamicFanController
+
         // Sensors class reference
         internal Platform Platform;
 
@@ -50,11 +54,53 @@ namespace OmenMon.AppGui {
 
         }
 
+        // Avvia la modalità dinamica
+public void StartDynamicCurve(DynamicFanCurve curve, bool isAlternate = false) {
+    // Ferma eventuali programmi attivi
+    if (Program != null && Program.IsEnabled)
+        Program.Terminate();
+    if (dynamicController != null && dynamicController.IsEnabled)
+        dynamicController.Stop();
+
+    dynamicController = new DynamicFanController(Platform, curve, FanProgramCallback);
+    dynamicController.Start(isAlternate);
+    activeController = dynamicController;
+}
+
+// Ferma la modalità dinamica
+public void StopDynamicCurve() {
+    if (dynamicController != null && dynamicController.IsEnabled) {
+        dynamicController.Stop();
+        activeController = null;
+    }
+}
+
         // Shows the about dialog
         public static void About(string title = "", string text = "") {
             (new GuiFormAbout(title, text)).ShowDialog();
         }
 
+        // Modifica di AutoConfig per usare la curva dinamica se configurata
+public void AutoConfig() {
+    Hw.TaskSet(Config.TaskId.Gui, Config.AutoStartup);
+    this.Platform.System.SetGpuPower(new BiosData.GpuPowerData(
+        (BiosData.GpuPowerLevel)Enum.Parse(typeof(BiosData.GpuPowerLevel), Config.GpuPowerDefault)));
+
+    if (Config.UseDynamicFanCurve) {
+        // Sceglie la curva in base allo stato di alimentazione
+        var curve = this.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
+        StartDynamicCurve(curve, !this.FullPower);
+    } else {
+        if (this.FullPower)
+            this.Program.Run(Config.FanProgramDefault);
+        else
+            this.Program.Run(Config.FanProgramDefaultAlt, true);
+    }
+
+    if (Context.FormMain != null && Context.FormMain.Visible)
+        Context.FormMain.UpdateFanCtl();
+}
+/*
         // Automatically applies the configuration on startup
         public void AutoConfig() {
 
@@ -78,7 +124,7 @@ namespace OmenMon.AppGui {
             if(Context.FormMain != null && Context.FormMain.Visible)
                 Context.FormMain.UpdateFanCtl();
 
-        }
+        }*/
 
         // Starts the automatic configuration in another thread
         // so as not to increase the application loading time
@@ -89,6 +135,44 @@ namespace OmenMon.AppGui {
             autoConfig.Start();
 
         }
+
+        // Adattamento di PowerChange
+public void PowerChange() {
+    if (Config.AutoConfig && this.FullPower != this.Platform.System.IsFullPower()) {
+        this.FullPower = !this.FullPower;
+
+        if (Config.UseDynamicFanCurve && activeController is DynamicFanController dynCtrl) {
+            // Cambia curva in base all'alimentazione
+            var newCurve = this.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
+            dynCtrl.SetCurve(newCurve);
+            dynCtrl.IsAlternate = !this.FullPower; // se vuoi usare il flag
+        } else if (!Config.UseDynamicFanCurve && this.Program.IsEnabled) {
+            if (this.FullPower)
+                this.Program.Run(Config.FanProgramDefault);
+            else
+                this.Program.Run(Config.FanProgramDefaultAlt, true);
+        }
+    }
+
+    if (Context.FormMain != null && Context.FormMain.Visible)
+        Context.FormMain.UpdateSys();
+}
+
+      // Adattamento di SuspendResumeCallback
+public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
+    if (type == PowrProf.PBT_APMRESUMEAUTOMATIC) {
+        if (activeController is FanProgram prog)
+            prog.Resume();
+        else if (activeController is DynamicFanController dyn)
+            dyn.Resume();
+    } else if (type == PowrProf.PBT_APMSUSPEND) {
+        if (activeController is FanProgram prog)
+            prog.Suspend();
+        else if (activeController is DynamicFanController dyn)
+            dyn.Suspend();
+    }
+    return 0;
+}
 
         // Keeps updating the status as the fan program runs in the background
         public void FanProgramCallback(FanProgram.Severity severity, string message) {
@@ -262,3 +346,4 @@ namespace OmenMon.AppGui {
     }
 
 }
+
