@@ -1,101 +1,48 @@
-using System;
-using OmenMon.Hardware.Bios;
-using OmenMon.Library;
+namespace OmenMon.Hardware.Platform {
+    public class FanCurvePoint {
+        public float Temperature { get; set; }   // °C
+        public byte FanSpeedCpu { get; set; }    // 0–100%
+        public byte FanSpeedGpu { get; set; }    // 0–100%
+    }
+}
+
+using System.Collections.Generic;
+using System.Linq;
 
 namespace OmenMon.Hardware.Platform {
-    public class DynamicFanController {
-        private Platform platform;
-        private DynamicFanCurve curve;
-        private Action<FanProgram.Severity, string> callback;
+    public class DynamicFanCurve {
+        private List<FanCurvePoint> points = new List<FanCurvePoint>();
 
-        public bool IsEnabled { get; private set; }
-        public bool IsSuspended { get; private set; }
-        public bool IsAlternate { get; private set; }
+        public IReadOnlyList<FanCurvePoint> Points => points.AsReadOnly();
 
-        private BiosData.FanMode? lastFanMode;
-        private BiosData.GpuPowerData? lastGpuPower;
-
-        public DynamicFanController(Platform platform, DynamicFanCurve curve, 
-                                     Action<FanProgram.Severity, string> callback) {
-            this.platform = platform;
-            this.curve = curve;
-            this.callback = callback;
+        public void AddPoint(float temp, byte cpu, byte gpu) {
+            points.Add(new FanCurvePoint { Temperature = temp, FanSpeedCpu = cpu, FanSpeedGpu = gpu });
+            points.Sort((a, b) => a.Temperature.CompareTo(b.Temperature));
         }
 
-        public string GetName() => "Curva Dinamica";
-
-        public void Start(bool isAlternate = false) {
-            if (IsEnabled) return;
-
-            if (Config.FanLevelNeedManual)
-                platform.Fans.SetManual(true);
-
-            IsAlternate = isAlternate;
-            IsEnabled = true;
-            IsSuspended = false;
-
-            lastFanMode = platform.Fans.GetMode();
-            lastGpuPower = platform.System.GetGpuPower();
-
-            callback?.Invoke(FanProgram.Severity.Notice, "Controllo dinamico avviato");
+        public void RemovePoint(int index) {
+            if (index >= 0 && index < points.Count)
+                points.RemoveAt(index);
         }
 
-        public void Stop() {
-            if (!IsEnabled) return;
+        public void Clear() => points.Clear();
 
-            platform.Fans.SetLevels(new byte[] { byte.MaxValue, byte.MaxValue });
-            if (Config.FanLevelNeedManual)
-                platform.Fans.SetManual(false);
+        // Interpolazione lineare
+        public (byte cpu, byte gpu) GetFanSpeeds(float temperature) {
+            if (points.Count == 0) return (0, 0);
+            if (points.Count == 1) return (points[0].FanSpeedCpu, points[0].FanSpeedGpu);
+            if (temperature <= points[0].Temperature) return (points[0].FanSpeedCpu, points[0].FanSpeedGpu);
+            if (temperature >= points[^1].Temperature) return (points[^1].FanSpeedCpu, points[^1].FanSpeedGpu);
 
-            if (lastFanMode.HasValue)
-                platform.Fans.SetMode(lastFanMode.Value);
-            if (lastGpuPower.HasValue)
-                platform.System.SetGpuPower(lastGpuPower.Value);
-
-            IsEnabled = false;
-            IsSuspended = false;
-
-            callback?.Invoke(FanProgram.Severity.Notice, "Controllo dinamico terminato");
-        }
-
-        public void Suspend() {
-            if (!IsEnabled || IsSuspended) return;
-            IsSuspended = true;
-
-            platform.Fans.SetLevels(new byte[] { byte.MaxValue, byte.MaxValue });
-            if (Config.FanLevelNeedManual)
-                platform.Fans.SetManual(false);
-            platform.Fans.SetMode(lastFanMode ?? BiosData.FanMode.Default);
-
-            callback?.Invoke(FanProgram.Severity.Notice, "Controllo dinamico sospeso");
-        }
-
-        public void Resume() {
-            if (!IsEnabled || !IsSuspended) return;
-            IsSuspended = false;
-
-            if (Config.FanLevelNeedManual)
-                platform.Fans.SetManual(true);
-            Update();
-
-            callback?.Invoke(FanProgram.Severity.Notice, "Controllo dinamico ripristinato");
-        }
-
-        public void Update() {
-            if (!IsEnabled || IsSuspended) return;
-
-            byte maxTemp = platform.GetMaxTemperature(true);
-            var (cpu, gpu) = curve.GetFanSpeeds(maxTemp);
-
-            platform.Fans.SetLevels(new byte[] { cpu, gpu });
-
-            callback?.Invoke(FanProgram.Severity.Verbose,
-                $"Temp: {maxTemp}°C -> Ventole: CPU={cpu}%, GPU={gpu}%");
-        }
-
-        // Permette di cambiare curva a caldo (es. quando si passa da AC a batteria)
-        public void SetCurve(DynamicFanCurve newCurve) {
-            curve = newCurve;
+            for (int i = 0; i < points.Count - 1; i++) {
+                if (temperature >= points[i].Temperature && temperature <= points[i + 1].Temperature) {
+                    float t = (temperature - points[i].Temperature) / (points[i + 1].Temperature - points[i].Temperature);
+                    byte cpu = (byte)(points[i].FanSpeedCpu + t * (points[i + 1].FanSpeedCpu - points[i].FanSpeedCpu));
+                    byte gpu = (byte)(points[i].FanSpeedGpu + t * (points[i + 1].FanSpeedGpu - points[i].FanSpeedGpu));
+                    return (cpu, gpu);
+                }
+            }
+            return (0, 0);
         }
     }
 }
