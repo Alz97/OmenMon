@@ -21,6 +21,10 @@ namespace OmenMon.Library {
     // This part only contains the implementing methods
     public static partial class Config {
 
+        public static bool UseDynamicFanCurve { get; set; } = false;
+        public static DynamicFanCurve DynamicCurveAC { get; set; } = new DynamicFanCurve();
+        public static DynamicFanCurve DynamicCurveBattery { get; set; } = new DynamicFanCurve();
+
 #region Initialization
         // State flag
         public static bool IsInitialized { get; private set; }
