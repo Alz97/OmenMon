@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using OmenMon.External;
 using OmenMon.Hardware.Bios;
 using OmenMon.Hardware.Ec;
-using OmenMon.Hardware.Platform;
+using OmenMon.Hardware.Platform;  // Necessario per DynamicFanController e DynamicFanCurve
 using OmenMon.Library;
 
 namespace OmenMon.AppGui {
@@ -17,14 +17,19 @@ namespace OmenMon.AppGui {
     // Implements a backend for GUI mode operations
     public class GuiOp {
 
-        // Campi aggiuntivi
+        // Riferimento al controller dinamico (se attivo)
         private DynamicFanController dynamicController;
-        private object activeController; // può essere FanProgram o DynamicFanController
+
+        // Riferimento al controller attivo (può essere FanProgram o DynamicFanController)
+        private object activeController;
+
+        // Espone il controller attivo in lettura per altre classi (es. GuiTray)
+        public object ActiveController => activeController;
 
         // Sensors class reference
         internal Platform Platform;
 
-        // Fan program class reference
+        // Fan program class reference (programmi statici)
         internal FanProgram Program;
 
         // Parent class reference
@@ -54,53 +59,32 @@ namespace OmenMon.AppGui {
 
         }
 
-        // Avvia la modalità dinamica
-public void StartDynamicCurve(DynamicFanCurve curve, bool isAlternate = false) {
-    // Ferma eventuali programmi attivi
-    if (Program != null && Program.IsEnabled)
-        Program.Terminate();
-    if (dynamicController != null && dynamicController.IsEnabled)
-        dynamicController.Stop();
+        // Avvia la modalità dinamica con una curva specifica
+        public void StartDynamicCurve(DynamicFanCurve curve, bool isAlternate = false) {
+            // Ferma eventuali programmi attivi
+            if (Program != null && Program.IsEnabled)
+                Program.Terminate();
+            if (dynamicController != null && dynamicController.IsEnabled)
+                dynamicController.Stop();
 
-    dynamicController = new DynamicFanController(Platform, curve, FanProgramCallback);
-    dynamicController.Start(isAlternate);
-    activeController = dynamicController;
-}
+            dynamicController = new DynamicFanController(Platform, curve, FanProgramCallback);
+            dynamicController.Start(isAlternate);
+            activeController = dynamicController;
+        }
 
-// Ferma la modalità dinamica
-public void StopDynamicCurve() {
-    if (dynamicController != null && dynamicController.IsEnabled) {
-        dynamicController.Stop();
-        activeController = null;
-    }
-}
+        // Ferma la modalità dinamica
+        public void StopDynamicCurve() {
+            if (dynamicController != null && dynamicController.IsEnabled) {
+                dynamicController.Stop();
+                activeController = null;
+            }
+        }
 
         // Shows the about dialog
         public static void About(string title = "", string text = "") {
             (new GuiFormAbout(title, text)).ShowDialog();
         }
 
-        // Modifica di AutoConfig per usare la curva dinamica se configurata
-public void AutoConfig() {
-    Hw.TaskSet(Config.TaskId.Gui, Config.AutoStartup);
-    this.Platform.System.SetGpuPower(new BiosData.GpuPowerData(
-        (BiosData.GpuPowerLevel)Enum.Parse(typeof(BiosData.GpuPowerLevel), Config.GpuPowerDefault)));
-
-    if (Config.UseDynamicFanCurve) {
-        // Sceglie la curva in base allo stato di alimentazione
-        var curve = this.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
-        StartDynamicCurve(curve, !this.FullPower);
-    } else {
-        if (this.FullPower)
-            this.Program.Run(Config.FanProgramDefault);
-        else
-            this.Program.Run(Config.FanProgramDefaultAlt, true);
-    }
-
-    if (Context.FormMain != null && Context.FormMain.Visible)
-        Context.FormMain.UpdateFanCtl();
-}
-/*
         // Automatically applies the configuration on startup
         public void AutoConfig() {
 
@@ -113,18 +97,23 @@ public void AutoConfig() {
                     (BiosData.GpuPowerLevel)
                         Enum.Parse(typeof(BiosData.GpuPowerLevel), Config.GpuPowerDefault)));
 
-            // Apply the default fan program,
-            // or the alternative program if no AC
-            if(this.FullPower)
-                this.Program.Run(Config.FanProgramDefault);
-            else
-                this.Program.Run(Config.FanProgramDefaultAlt, true);
+            // Avvia il controllo appropriato in base alla configurazione
+            if (Config.UseDynamicFanCurve) {
+                // Sceglie la curva in base allo stato di alimentazione
+                var curve = this.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
+                StartDynamicCurve(curve, !this.FullPower);
+            } else {
+                if (this.FullPower)
+                    this.Program.Run(Config.FanProgramDefault);
+                else
+                    this.Program.Run(Config.FanProgramDefaultAlt, true);
+            }
 
             // Update the main form, if visible
-            if(Context.FormMain != null && Context.FormMain.Visible)
+            if (Context.FormMain != null && Context.FormMain.Visible)
                 Context.FormMain.UpdateFanCtl();
 
-        }*/
+        }
 
         // Starts the automatic configuration in another thread
         // so as not to increase the application loading time
@@ -136,63 +125,39 @@ public void AutoConfig() {
 
         }
 
-        // Adattamento di PowerChange
-public void PowerChange() {
-    if (Config.AutoConfig && this.FullPower != this.Platform.System.IsFullPower()) {
-        this.FullPower = !this.FullPower;
-
-        if (Config.UseDynamicFanCurve && activeController is DynamicFanController dynCtrl) {
-            // Cambia curva in base all'alimentazione
-            var newCurve = this.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
-            dynCtrl.SetCurve(newCurve);
-            dynCtrl.IsAlternate = !this.FullPower; // se vuoi usare il flag
-        } else if (!Config.UseDynamicFanCurve && this.Program.IsEnabled) {
-            if (this.FullPower)
-                this.Program.Run(Config.FanProgramDefault);
-            else
-                this.Program.Run(Config.FanProgramDefaultAlt, true);
-        }
-    }
-
-    if (Context.FormMain != null && Context.FormMain.Visible)
-        Context.FormMain.UpdateSys();
-}
-
-      // Adattamento di SuspendResumeCallback
-public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
-    if (type == PowrProf.PBT_APMRESUMEAUTOMATIC) {
-        if (activeController is FanProgram prog)
-            prog.Resume();
-        else if (activeController is DynamicFanController dyn)
-            dyn.Resume();
-    } else if (type == PowrProf.PBT_APMSUSPEND) {
-        if (activeController is FanProgram prog)
-            prog.Suspend();
-        else if (activeController is DynamicFanController dyn)
-            dyn.Suspend();
-    }
-    return 0;
-}
-
         // Keeps updating the status as the fan program runs in the background
         public void FanProgramCallback(FanProgram.Severity severity, string message) {
 
+            // Determina il nome del programma attivo (statico o dinamico)
+            string progName = "";
+            bool isAlt = false;
+
+            if (activeController is FanProgram prog) {
+                progName = prog.GetName();
+                isAlt = prog.IsAlternate;
+            } else if (activeController is DynamicFanController dyn) {
+                progName = dyn.GetName();   // Assicurati che DynamicFanController abbia un metodo GetName()
+                isAlt = dyn.IsAlternate;    // Assicurati che abbia una proprietà IsAlternate
+            } else {
+                progName = Program.GetName();
+                isAlt = Program.IsAlternate;
+            }
+
             // For important status updates only,
             // show a balloon tray notification
-            if(severity == FanProgram.Severity.Important)
+            if (severity == FanProgram.Severity.Important)
                 Context.ShowBalloonTip(message);
 
             // Handle notice-severity messages
-            else if(severity == FanProgram.Severity.Notice) {
+            else if (severity == FanProgram.Severity.Notice) {
 
                 // Add a prefix if an alternate fan program
-                string name = Context.Op.Program.IsAlternate ?
-                    Config.Locale.Get(Config.L_PROG + "Alt") + " "
-                    + Context.Op.Program.GetName()
-                    : Context.Op.Program.GetName();
+                string name = isAlt ?
+                    Config.Locale.Get(Config.L_PROG + "Alt") + " " + progName
+                    : progName;
 
                 // If the main form is available, update the status there
-                if(Context.FormMain != null && Context.FormMain.Visible)
+                if (Context.FormMain != null && Context.FormMain.Visible)
                     Context.FormMain.UpdateSysMsg(
                         message.Replace(
                             Config.Locale.Get(Config.L_PROG + "SubMax"),
@@ -217,11 +182,11 @@ public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
 
             // If Omen key is set
             // to toggle fan program 
-            if(Config.KeyToggleFanProgram) {
+            if (Config.KeyToggleFanProgram) {
 
                 // Show the form on first press
                 // if configured to do so and not already shown
-                if(Config.KeyToggleFanProgramShowGuiFirst &&
+                if (Config.KeyToggleFanProgramShowGuiFirst &&
                     (Context.FormMain == null || !Context.FormMain.Visible))
                     Context.ShowFormMain();
 
@@ -229,14 +194,14 @@ public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
 
                     // Configured to cycle
                     // through all fan programs
-                    if(Config.KeyToggleFanProgramCycleAll) {
+                    if (Config.KeyToggleFanProgramCycleAll) {
 
                         // Default to the first fan program 
                         string next = Config.FanProgram.Keys[0];
 
                         // If a program is running,
                         // cycle to the next one, if exists
-                        if(this.Program.IsEnabled)
+                        if (this.Program.IsEnabled)
                             try {
                                 next = Config.FanProgram.Keys[
                                     Config.FanProgram.IndexOfKey(this.Program.GetName()) + 1];
@@ -245,28 +210,28 @@ public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
                         // Run the next fan program
                         this.Program.Run(next);
 
-                    // Configured to toggle
-                    // default fan program on and off
+                        // Configured to toggle
+                        // default fan program on and off
                     } else {
 
                         // Terminate a program, if there is one running
-                        if(this.Program.IsEnabled)
+                        if (this.Program.IsEnabled)
                             this.Program.Terminate();
 
                         // Run the default program, if no program running
                         else
                             this.Program.Run(Config.FanProgramDefault);
 
-                        }
+                    }
 
                     // Update the main form fan controls
                     // (if main form is being shown)
-                    if(Context.FormMain != null && Context.FormMain.Visible)
+                    if (Context.FormMain != null && Context.FormMain.Visible)
                         Context.FormMain.UpdateFanCtl();
 
                     // Otherwise, show a balloon tip notification
                     // unless configured to toggle programs silently
-                    else if(!Config.KeyToggleFanProgramSilent)
+                    else if (!Config.KeyToggleFanProgramSilent)
                         this.FanProgramCallback(
                             FanProgram.Severity.Important,
                             this.Program.IsEnabled ?
@@ -275,9 +240,9 @@ public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
 
                 }
 
-            // If Omen key action is set
-            // to trigger a custom action
-            } else if(Config.KeyCustomActionEnabled) {
+                // If Omen key action is set
+                // to trigger a custom action
+            } else if (Config.KeyCustomActionEnabled) {
 
                 // Launch the action
                 Process customAction = new Process();
@@ -300,44 +265,52 @@ public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
         // Responds to power-mode status change events
         public void PowerChange() {
 
-            // Only if a fan program is active, if configured to do so,
-            // and if the power state actually changed from the last-recorded
-            if(Config.AutoConfig && this.Program.IsEnabled
-                && this.FullPower != this.Platform.System.IsFullPower()) {
+            // Only if automatic config is enabled and the power state actually changed
+            if (Config.AutoConfig && this.FullPower != this.Platform.System.IsFullPower()) {
 
                 // Toggle the power state
                 this.FullPower = !this.FullPower;
 
-                // Apply the default fan program,
-                // or the alternative program if no AC
-                if(this.FullPower)
-                    this.Program.Run(Config.FanProgramDefault);
-                else
-                    this.Program.Run(Config.FanProgramDefaultAlt, true);
+                if (Config.UseDynamicFanCurve && activeController is DynamicFanController dynCtrl) {
+                    // Cambia curva in base all'alimentazione
+                    var newCurve = this.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
+                    dynCtrl.SetCurve(newCurve);
+                    dynCtrl.IsAlternate = !this.FullPower;
+                } else if (!Config.UseDynamicFanCurve && this.Program.IsEnabled) {
+                    if (this.FullPower)
+                        this.Program.Run(Config.FanProgramDefault);
+                    else
+                        this.Program.Run(Config.FanProgramDefaultAlt, true);
+                }
 
             }
 
             // Separately also update the main form, if it's visible
-            if(Context.FormMain != null && Context.FormMain.Visible)
-               Context.FormMain.UpdateSys();
+            if (Context.FormMain != null && Context.FormMain.Visible)
+                Context.FormMain.UpdateSys();
 
         }
 
         // Responds to the system entering and resuming from low-power state events
         public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
 
-            // System is resuming from suspend
-            if(type == PowrProf.PBT_APMRESUMEAUTOMATIC)
-
-                // Resume the fan program
-                this.Program.Resume();
-
-            // System is about to be suspended
-            // and a fan program is running
-            else if(type == PowrProf.PBT_APMSUSPEND)
-
-                // Suspend the fan program
-                this.Program.Suspend();
+            if (type == PowrProf.PBT_APMRESUMEAUTOMATIC) {
+                // System is resuming from suspend
+                if (activeController is FanProgram prog)
+                    prog.Resume();
+                else if (activeController is DynamicFanController dyn)
+                    dyn.Resume();
+                else
+                    this.Program.Resume(); // fallback
+            } else if (type == PowrProf.PBT_APMSUSPEND) {
+                // System is about to be suspended
+                if (activeController is FanProgram prog)
+                    prog.Suspend();
+                else if (activeController is DynamicFanController dyn)
+                    dyn.Suspend();
+                else
+                    this.Program.Suspend(); // fallback
+            }
 
             return 0;
 
@@ -346,4 +319,3 @@ public uint SuspendResumeCallback(IntPtr context, uint type, IntPtr setting) {
     }
 
 }
-
