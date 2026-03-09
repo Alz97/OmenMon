@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?> 
 <OmenMon>
 
-   // public static bool UseDynamicFanCurve { get; set; } = false;
-   // public static DynamicFanCurve DynamicCurveAC { get; set; } = new DynamicFanCurve();
-   // public static DynamicFanCurve DynamicCurveBattery { get; set; } = new DynamicFanCurve();
-
     <!--
 
       //\\   OmenMon: Hardware Monitoring & Control Utility
@@ -164,6 +160,34 @@
              the specified period has passed) -->
         <GpuPowerSetInterval>200</GpuPowerSetInterval>
 
+        <!-- DYNAMIC FAN CURVE SETTINGS (NEW) -->
+        <!-- Enable dynamic fan curve control instead of static fan programs -->
+        <UseDynamicFanCurve>false</UseDynamicFanCurve>
+
+        <!-- Dynamic fan curve when on AC power (full power) -->
+        <DynamicCurveAC>
+            <!-- Example curve: points (temperature °C, CPU fan %, GPU fan %) -->
+            <Point Temp="30" Cpu="20" Gpu="20" />
+            <Point Temp="40" Cpu="25" Gpu="25" />
+            <Point Temp="50" Cpu="30" Gpu="30" />
+            <Point Temp="60" Cpu="40" Gpu="35" />
+            <Point Temp="70" Cpu="50" Gpu="45" />
+            <Point Temp="80" Cpu="65" Gpu="60" />
+            <Point Temp="90" Cpu="80" Gpu="75" />
+        </DynamicCurveAC>
+
+        <!-- Dynamic fan curve when on battery power -->
+        <DynamicCurveBattery>
+            <!-- Qui puoi mettere una curva più conservativa per la batteria -->
+            <Point Temp="30" Cpu="15" Gpu="15" />
+            <Point Temp="40" Cpu="20" Gpu="20" />
+            <Point Temp="50" Cpu="25" Gpu="25" />
+            <Point Temp="60" Cpu="30" Gpu="30" />
+            <Point Temp="70" Cpu="40" Gpu="35" />
+            <Point Temp="80" Cpu="50" Gpu="45" />
+            <Point Temp="90" Cpu="60" Gpu="55" />
+        </DynamicCurveBattery>
+
         <!-- Graphical User Interface -->
 
         <!-- Whether closing the window closes the whole application -->
@@ -271,4 +295,3 @@
     </Messages>
 
 </OmenMon>
-
