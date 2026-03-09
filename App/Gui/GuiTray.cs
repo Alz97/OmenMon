@@ -73,6 +73,17 @@ dynamicItem.Click += (s, e) => {
     }
 };
 
+  MenuItem toggleDynamic = new MenuItem("Usa curva dinamica") {
+    Checked = Config.UseDynamicFanCurve
+};
+toggleDynamic.Click += (s, e) => {
+    Config.UseDynamicFanCurve = !Config.UseDynamicFanCurve;
+    toggleDynamic.Checked = Config.UseDynamicFanCurve;
+    // Riavvia la configurazione automatica per applicare la modifica
+    Context.Op.AutoConfigRun();
+    Config.Save();
+};
+
             // Retain the context for future use
             if(Context == null)
                 Context = this;
@@ -350,4 +361,5 @@ dynamicItem.Click += (s, e) => {
     }
 
 }
+
 
