@@ -7,6 +7,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 using OmenMon.Hardware.Bios;
 using OmenMon.Hardware.Ec;
+using OmenMon.Hardware.Platform;  // Aggiunto per DynamicFanController
 using OmenMon.Library;
 
 namespace OmenMon.AppGui {
@@ -55,35 +56,6 @@ namespace OmenMon.AppGui {
         // Constructs the tray notification application context
         public GuiTray () {
 
-            MenuItem dynamicItem = new MenuItem("Curva dinamica...");
-dynamicItem.Click += (s, e) => {
-    using (var form = new GuiFormFanCurve(Config.DynamicCurveAC, Config.DynamicCurveBattery)) {
-        if (form.ShowDialog() == DialogResult.OK) {
-            // Salva le curve modificate
-            Config.DynamicCurveAC = form.CurveAC;
-            Config.DynamicCurveBattery = form.CurveBattery;
-            Config.Save(); // se esiste un metodo di salvataggio
-
-            // Se la modalità dinamica è attiva, aggiorna il controller
-            if (Config.UseDynamicFanCurve && Context.Op.activeController is DynamicFanController dyn) {
-                var currentCurve = Context.Op.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
-                dyn.SetCurve(currentCurve);
-            }
-        }
-    }
-};
-
-  MenuItem toggleDynamic = new MenuItem("Usa curva dinamica") {
-    Checked = Config.UseDynamicFanCurve
-};
-toggleDynamic.Click += (s, e) => {
-    Config.UseDynamicFanCurve = !Config.UseDynamicFanCurve;
-    toggleDynamic.Checked = Config.UseDynamicFanCurve;
-    // Riavvia la configurazione automatica per applicare la modifica
-    Context.Op.AutoConfigRun();
-    Config.Save();
-};
-
             // Retain the context for future use
             if(Context == null)
                 Context = this;
@@ -108,6 +80,44 @@ toggleDynamic.Click += (s, e) => {
 
             // Initialize the menu class
             this.Menu = new GuiMenu(Context);
+
+            // --- Nuove voci di menu per la curva dinamica ---
+            ToolStripMenuItem dynamicItem = new ToolStripMenuItem("Curva dinamica...");
+            dynamicItem.Click += (s, e) => {
+                using (var form = new GuiFormFanCurve(Config.DynamicCurveAC, Config.DynamicCurveBattery)) {
+                    if (form.ShowDialog() == DialogResult.OK) {
+                        // Salva le curve modificate
+                        Config.DynamicCurveAC = form.CurveAC;
+                        Config.DynamicCurveBattery = form.CurveBattery;
+                        Config.Save(); // Assicurati che Config.Save() esista
+
+                        // Se la modalità dinamica è attiva, aggiorna il controller
+                        if (Config.UseDynamicFanCurve && this.Op.ActiveController is DynamicFanController dyn) {
+                            var currentCurve = this.Op.FullPower ? Config.DynamicCurveAC : Config.DynamicCurveBattery;
+                            dyn.SetCurve(currentCurve);
+                        }
+                    }
+                }
+            };
+
+            ToolStripMenuItem toggleDynamic = new ToolStripMenuItem("Usa curva dinamica") {
+                Checked = Config.UseDynamicFanCurve
+            };
+            toggleDynamic.Click += (s, e) => {
+                Config.UseDynamicFanCurve = !Config.UseDynamicFanCurve;
+                toggleDynamic.Checked = Config.UseDynamicFanCurve;
+                // Riavvia la configurazione automatica per applicare la modifica
+                this.Op.AutoConfigRun();
+                Config.Save();
+            };
+
+            // Aggiungi le voci al menu contestuale
+            this.Notification.ContextMenuStrip.Items.AddRange(new ToolStripItem[] { 
+                new ToolStripSeparator(), // Separatore per distinguerle
+                dynamicItem, 
+                toggleDynamic 
+            });
+            // -------------------------------------------------
 
             // Define event handlers
             this.Notification.ContextMenuStrip.Closing += Menu.EventClosing;
@@ -178,8 +188,12 @@ toggleDynamic.Click += (s, e) => {
             // Stop receiving power event notifications
             Gui.UnregisterSuspendResumeNotification();
 
-            // Terminate the fan program, if any
-            if(this.Op.Program.IsEnabled)
+            // Terminate any active controller (static or dynamic)
+            if (this.Op.ActiveController is FanProgram prog && prog.IsEnabled)
+                prog.Terminate();
+            else if (this.Op.ActiveController is DynamicFanController dyn && dyn.IsEnabled)
+                dyn.Stop();
+            else if (this.Op.Program.IsEnabled) // Fallback per compatibilità
                 this.Op.Program.Terminate();
 
             // Perform the usual tasks
@@ -313,18 +327,20 @@ toggleDynamic.Click += (s, e) => {
             if(this.UpdateProgramTick >= Config.UpdateProgramInterval)
                 this.UpdateProgramTick = 0;
 
-            // Update the fan program or extend the countdown
-            if(this.UpdateProgramTick++ == 0) {
+            // Aggiorna il controller attivo (programma statico o dinamico)
+            if (this.UpdateProgramTick++ == 0) {
 
-                // Update the program, if active
-                if(this.Op.Program.IsEnabled)
+                // Determina quale controller è attivo
+                if (this.Op.ActiveController is FanProgram prog && prog.IsEnabled)
+                    prog.Update();
+                else if (this.Op.ActiveController is DynamicFanController dyn && dyn.IsEnabled)
+                    dyn.Update();
+                else if (this.Op.Program.IsEnabled)  // Fallback per compatibilità
                     this.Op.Program.Update();
 
-                // Alternatively, update any non-zero countdown
-                // depending on the configuration settings
-                else if(Config.FanCountdownExtendAlways)
+                // Gestione countdown per i programmi statici (se non attivo)
+                else if (Config.FanCountdownExtendAlways)
                     this.Op.Program.UpdateCountdown(false, true);
-
             }
 
             // Update the main form, only if visible
@@ -347,9 +363,9 @@ toggleDynamic.Click += (s, e) => {
                     Conv.GetString(
                         this.Op.Platform.GetMaxTemperature(
                             // Only force sensor update if neither the main form
-                            // nor the currently-running fan program did so
+                            // nor the currently-running controller did so
                             (this.FormMain == null || !this.FormMain.Visible)
-                            && (!this.Op.Program.IsEnabled || this.UpdateProgramTick != 1)),
+                            && (this.Op.ActiveController == null || this.UpdateProgramTick != 1)),
                         2, 10)
                     + Config.Locale.Get(
                         Config.L_UNIT + "Temperature" + Config.LS_CUSTOM_FONT));
@@ -361,5 +377,3 @@ toggleDynamic.Click += (s, e) => {
     }
 
 }
-
-
