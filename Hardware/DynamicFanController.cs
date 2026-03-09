@@ -15,7 +15,7 @@ namespace OmenMon.Hardware.Platform {
         private BiosData.FanMode? lastFanMode;
         private BiosData.GpuPowerData? lastGpuPower;
 
-        public DynamicFanController(Platform platform, DynamicFanCurve curve, 
+        public DynamicFanController(Platform platform, DynamicFanCurve curve,
                                      Action<FanProgram.Severity, string> callback) {
             this.platform = platform;
             this.curve = curve;
@@ -36,6 +36,10 @@ namespace OmenMon.Hardware.Platform {
 
             lastFanMode = platform.Fans.GetMode();
             lastGpuPower = platform.System.GetGpuPower();
+
+            // Estendi il countdown iniziale se configurato
+            if (Config.FanCountdownExtendInterval > 0)
+                platform.Fans.SetCountdown(Config.FanCountdownExtendInterval);
 
             callback?.Invoke(FanProgram.Severity.Notice, "Controllo dinamico avviato");
         }
@@ -76,6 +80,11 @@ namespace OmenMon.Hardware.Platform {
 
             if (Config.FanLevelNeedManual)
                 platform.Fans.SetManual(true);
+
+            // Estendi il countdown dopo la ripresa
+            if (Config.FanCountdownExtendInterval > 0)
+                platform.Fans.SetCountdown(Config.FanCountdownExtendInterval);
+
             Update();
 
             callback?.Invoke(FanProgram.Severity.Notice, "Controllo dinamico ripristinato");
@@ -88,6 +97,10 @@ namespace OmenMon.Hardware.Platform {
             var (cpu, gpu) = curve.GetFanSpeeds(maxTemp);
 
             platform.Fans.SetLevels(new byte[] { cpu, gpu });
+
+            // Estendi il countdown per evitare che l'EC riprenda il controllo automatico
+            if (Config.FanCountdownExtendInterval > 0)
+                platform.Fans.SetCountdown(Config.FanCountdownExtendInterval);
 
             callback?.Invoke(FanProgram.Severity.Verbose,
                 $"Temp: {maxTemp}°C -> Ventole: CPU={cpu}%, GPU={gpu}%");
