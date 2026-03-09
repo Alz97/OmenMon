@@ -21,6 +21,7 @@ namespace OmenMon.Library {
     // This part only contains the implementing methods
     public static partial class Config {
 
+        // Nuove proprietà per il controllo dinamico delle ventole
         public static bool UseDynamicFanCurve { get; set; } = false;
         public static DynamicFanCurve DynamicCurveAC { get; set; } = new DynamicFanCurve();
         public static DynamicFanCurve DynamicCurveBattery { get; set; } = new DynamicFanCurve();
@@ -122,6 +123,23 @@ namespace OmenMon.Library {
             } catch {  }
             return false;
 
+        }
+
+        // Carica una curva dinamica dal nodo XML specificato
+        private static DynamicFanCurve LoadCurve(XmlDocument xml, string nodePath) {
+            var curve = new DynamicFanCurve();
+            try {
+                var node = xml.SelectSingleNode(nodePath);
+                if (node != null) {
+                    foreach (XmlNode pointNode in node.SelectNodes("Point")) {
+                        float temp = float.Parse(pointNode.Attributes["Temp"].Value);
+                        byte cpu = byte.Parse(pointNode.Attributes["Cpu"].Value);
+                        byte gpu = byte.Parse(pointNode.Attributes["Gpu"].Value);
+                        curve.AddPoint(temp, cpu, gpu);
+                    }
+                }
+            } catch { /* Ignora errori di parsing, ritorna curva vuota */ }
+            return curve;
         }
 
         // Loads the configuration data from the XML file
@@ -268,6 +286,13 @@ namespace OmenMon.Library {
                     if(GetBool(xml, XmlPrefixKeyCustomAction + "Minimized", out flag))
                         KeyCustomActionMinimized = flag;
 
+                    // Carica le impostazioni per la curva dinamica
+                    if(GetBool(xml, XmlPrefix + "UseDynamicFanCurve", out flag))
+                        UseDynamicFanCurve = flag;
+
+                    DynamicCurveAC = LoadCurve(xml, XmlPrefix + "DynamicCurveAC");
+                    DynamicCurveBattery = LoadCurve(xml, XmlPrefix + "DynamicCurveBattery");
+
                     // Load the color presets
                     SortedDictionary<string, BiosData.ColorTable> ColorPresetXml
                         = new SortedDictionary<string, BiosData.ColorTable>();
@@ -392,6 +417,30 @@ namespace OmenMon.Library {
 #endregion
 
 #region Configuration Saving
+
+        // Salva una curva dinamica nel nodo XML specificato
+        private static void SaveCurve(XmlDocument xml, XmlNode parent, string nodeName, DynamicFanCurve curve) {
+            // Rimuovi il vecchio nodo se esiste
+            var oldNode = parent.SelectSingleNode(nodeName);
+            if (oldNode != null)
+                parent.RemoveChild(oldNode);
+
+            // Se la curva non ha punti, non salvarla (opzionale)
+            if (curve.Points.Count == 0)
+                return;
+
+            // Crea il nuovo nodo
+            var curveNode = parent.AppendChild(xml.CreateElement(nodeName));
+
+            // Aggiungi i punti
+            foreach (var point in curve.Points) {
+                var pointNode = curveNode.AppendChild(xml.CreateElement("Point"));
+                pointNode.SetAttribute("Temp", point.Temperature.ToString("0.0"));
+                pointNode.SetAttribute("Cpu", point.FanSpeedCpu.ToString());
+                pointNode.SetAttribute("Gpu", point.FanSpeedGpu.ToString());
+            }
+        }
+
         // Save the configuration data to the XML file
         public static void Save() {
 
@@ -420,6 +469,16 @@ namespace OmenMon.Library {
                     SetBool(xml, XmlPrefix + "AutoConfig", AutoConfig);
                     SetBool(xml, XmlPrefix + "AutoStartup", AutoStartup);
                     SetBool(xml, XmlPrefix + "BiosErrorReporting", BiosErrorReporting);
+
+                    // Salva le impostazioni della curva dinamica
+                    SetBool(xml, XmlPrefix + "UseDynamicFanCurve", UseDynamicFanCurve);
+
+                    // Ottieni il nodo radice (o crealo)
+                    XmlNode root = SetPath(xml, XmlPrefix.TrimEnd('/')); // Assumendo che XmlPrefix sia come "/OmenMon/Config/"
+
+                    // Salva le curve
+                    SaveCurve(xml, root, "DynamicCurveAC", DynamicCurveAC);
+                    SaveCurve(xml, root, "DynamicCurveBattery", DynamicCurveBattery);
 
                     // Color presets (so that the settings are sorted alphabetically)
                     // Ensure the parent element node exists, or create it
