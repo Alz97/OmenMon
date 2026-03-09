@@ -1,33 +1,55 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
 namespace OmenMon.Hardware.Platform {
+
     public class FanCurvePoint {
         public float Temperature { get; set; }   // °C
         public byte FanSpeedCpu { get; set; }    // 0–100%
         public byte FanSpeedGpu { get; set; }    // 0–100%
     }
-}
 
-using System.Collections.Generic;
-using System.Linq;
-
-namespace OmenMon.Hardware.Platform {
     public class DynamicFanCurve {
         private List<FanCurvePoint> points = new List<FanCurvePoint>();
 
         public IReadOnlyList<FanCurvePoint> Points => points.AsReadOnly();
 
+        // Costruttore di default
+        public DynamicFanCurve() { }
+
+        // Costruttore che accetta una collezione iniziale di punti (utile per deserializzazione)
+        public DynamicFanCurve(IEnumerable<FanCurvePoint> initialPoints) {
+            points = initialPoints.OrderBy(p => p.Temperature).ToList();
+        }
+
+        // Aggiunge un punto, mantenendo l'ordinamento per temperatura
         public void AddPoint(float temp, byte cpu, byte gpu) {
             points.Add(new FanCurvePoint { Temperature = temp, FanSpeedCpu = cpu, FanSpeedGpu = gpu });
             points.Sort((a, b) => a.Temperature.CompareTo(b.Temperature));
         }
 
+        // Rimuove un punto all'indice specificato
         public void RemovePoint(int index) {
             if (index >= 0 && index < points.Count)
                 points.RemoveAt(index);
         }
 
+        // Sostituisce l'intera curva con un nuovo set di punti
+        public void SetPoints(IEnumerable<FanCurvePoint> newPoints) {
+            points = newPoints.OrderBy(p => p.Temperature).ToList();
+        }
+
+        // Cancella tutti i punti
         public void Clear() => points.Clear();
 
-        // Interpolazione lineare
+        // Restituisce la temperatura minima definita nella curva (o 0 se vuota)
+        public float MinTemperature => points.Count > 0 ? points[0].Temperature : 0;
+
+        // Restituisce la temperatura massima definita nella curva (o 0 se vuota)
+        public float MaxTemperature => points.Count > 0 ? points[^1].Temperature : 0;
+
+        // Interpolazione lineare per ottenere le velocità delle ventole a una data temperatura
         public (byte cpu, byte gpu) GetFanSpeeds(float temperature) {
             if (points.Count == 0) return (0, 0);
             if (points.Count == 1) return (points[0].FanSpeedCpu, points[0].FanSpeedGpu);
@@ -42,7 +64,7 @@ namespace OmenMon.Hardware.Platform {
                     return (cpu, gpu);
                 }
             }
-            return (0, 0);
+            return (0, 0); // non dovrebbe mai accadere
         }
     }
 }
